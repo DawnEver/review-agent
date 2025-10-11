@@ -2,8 +2,8 @@ import datetime
 import logging
 from pathlib import Path
 
-from .config import OUTPUT_CONFIG
-
+# Suppress LiteLLM debug logging
+logging.getLogger('LiteLLM').setLevel(logging.WARNING)
 # --------------------------------------------------------------------------------------
 # Logger Initialization (idempotent)  -  concise + file & console
 # --------------------------------------------------------------------------------------
@@ -12,7 +12,7 @@ if not logger.handlers:  # Prevent duplicate handlers on reload
     logger.setLevel(logging.DEBUG)
 
     current_time = datetime.datetime.now()
-    log_dir = Path(OUTPUT_CONFIG['log_folder'])
+    log_dir = Path('./output/logs')
     log_dir.mkdir(parents=True, exist_ok=True)
     log_filename = current_time.strftime('%Y%m%d_%H') + '.log'
     log_path = log_dir / log_filename
@@ -22,7 +22,7 @@ if not logger.handlers:  # Prevent duplicate handlers on reload
     log_date_format: str = '%Y-%m-%d %H:%M:%S'
 
     file_handler = logging.FileHandler(log_path, encoding='utf-8')
-    file_handler.setLevel(logging.INFO)
+    file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(logging.Formatter(fmt=log_file_format, datefmt=log_date_format))
     logger.addHandler(file_handler)
 

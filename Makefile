@@ -6,9 +6,12 @@ install:
 
 .PHONY: install-dev
 install-dev:
-	pip install -e ".[dev,ai,opt]"
+	pip install -U pip wheel
+	pip install -e ".[dev,web]"
 	python -m pre-commit install
 	python -m pre-commit autoupdate
+	crawl4ai-setup
+
 
 .PHONY: lint
 lint:

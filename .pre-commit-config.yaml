@@ -19,13 +19,13 @@ repos:
   #   always_run: true
   - id: lint-python
     name: lint Python
-    entry: python -m ruff check --fix
+    entry: python -m ruff check --fix --exclude "src/review_agent/__version__.py"
     types: [python]
     language: system
     always_run: true
   - id: fmt-python
     name: fmt Python
-    entry: python -m ruff format
+    entry: python -m ruff format --exclude "src/review_agent/__version__.py"
     types: [python]
     language: system
     always_run: true

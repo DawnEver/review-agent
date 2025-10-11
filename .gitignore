@@ -13,4 +13,5 @@ input/
 output/
 logs/
 
+.env
 archived/
