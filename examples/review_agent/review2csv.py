@@ -7,4 +7,10 @@ input_folder_path = r'C:\Users\linxu\OneDrive - The University of Nottingham\PEM
 # review_type = 'automotive_article'
 
 output_folder_path = './output'
-review2csv(input_folder_path, output_folder_path)
+
+# Select review type by ID or name:
+# 0 -> 'literature_review'
+# 1 -> 'automotive_article'
+review_type_id = 1  # change to 0 for literature review
+
+review2csv(input_folder_path, output_folder_path, review_type_id=review_type_id)

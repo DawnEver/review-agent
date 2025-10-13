@@ -14,27 +14,49 @@ from datetime import datetime
 from pathlib import Path
 
 from .ai_chat_response import chat_response
-from .config import AI_MODELS_IN_USE, PROMPTS_IN_USE
+from .config import (
+    AI_MODELS_IN_USE as DEFAULT_AI_MODELS_IN_USE,
+)
+from .config import (
+    PROMPTS_IN_USE as DEFAULT_PROMPTS_IN_USE,
+)
+from .config import (
+    get_review_config,
+)
 from .extract_text import extract_text_from_html, extract_text_from_pdf, extract_text_from_txt
 from .logger import log
 
 # Output Configuration
 OUTPUT_CONFIG = {
-    'extracted_texts_subfolder': 'extracted_texts',
     'csv_filename_prefix': 'review',
     'raw_responses_filename_prefix': 'raw_responses',
     'timestamp_format': '%Y%m%d_%H%M',
 }
 timestamp = datetime.now().strftime(OUTPUT_CONFIG['timestamp_format'])
 
+# Supported input file suffixes
+SUPPORTED_SUFFIXES = ('.txt', '.md', '.pdf', '.html', '.htm')
 
-def literature_review(input_folder_path, output_folder=None):
-    """Summarize all Files in a folder and return aggregated raw responses."""
+
+def literature_review(
+    input_folder_path: Path,
+    output_folder: Path | None = None,
+    *,
+    ai_models_in_use: dict | None = None,
+    prompts_in_use: dict | None = None,
+):
+    """Summarize all files in a single folder and return aggregated raw responses.
+
+    Args:
+        input_folder_path: Folder containing source documents.
+        output_folder: Destination folder to write outputs. Defaults to 'output/'.
+
+    """
     input_folder_path = Path(input_folder_path)
-    output_folder = Path(output_folder)
-    output_folder.mkdir(exist_ok=True)
+    output_folder = Path(output_folder) if output_folder else Path('output')
+    output_folder.mkdir(parents=True, exist_ok=True)
     file_path_list = []
-    for suffix in ('.txt', '.md', '.pdf', '.html', '.htm'):
+    for suffix in SUPPORTED_SUFFIXES:
         file_path_list += list(input_folder_path.glob(f'*{suffix}'))
 
     if not file_path_list:
@@ -42,6 +64,8 @@ def literature_review(input_folder_path, output_folder=None):
         return ''
 
     raw_responses_folder = output_folder / f'{OUTPUT_CONFIG["raw_responses_filename_prefix"]}-{timestamp}'
+    ai_models_in_use = ai_models_in_use or DEFAULT_AI_MODELS_IN_USE
+    prompts_in_use = prompts_in_use or DEFAULT_PROMPTS_IN_USE
     log('Discovered files', count=len(file_path_list), output=str(raw_responses_folder))
 
     def unit_process(i_file: int, file_path: Path):
@@ -64,15 +88,14 @@ def literature_review(input_folder_path, output_folder=None):
 
         if file_suffix in ['.pdf', '.html', '.htm']:
             # Save extracted text alongside original PDF for reference
-            extracted_folder = output_folder / OUTPUT_CONFIG['extracted_texts_subfolder'] + '-' + timestamp
-            extracted_folder.mkdir(exist_ok=True)
+            extracted_folder = output_folder / f'extracted_texts-{timestamp}'
+            extracted_folder.mkdir(parents=True, exist_ok=True)
             with Path.open(extracted_folder / file_path.with_suffix('.txt').name, 'w', encoding='utf-8') as f:
                 f.write(text)
 
         log(f'Task: {i_file} Start summarizing file', file=file_path.name)
         char_count = len(text)
-
-        summary_model_dict = AI_MODELS_IN_USE['summary']
+        summary_model_dict = ai_models_in_use['summary']
         max_chars = summary_model_dict['context_length'] * 3 // 4
         if char_count > max_chars:
             text = text[:max_chars] + '\n\n[Text truncated due to length]'
@@ -86,8 +109,8 @@ def literature_review(input_folder_path, output_folder=None):
                 max_chars=max_chars,
             )
         messages = [
-            {'role': 'system', 'content': PROMPTS_IN_USE['system']},
-            {'role': 'user', 'content': f'{PROMPTS_IN_USE["summary"]}\n{base_info}\n\nPaper Content:\n{text}'},
+            {'role': 'system', 'content': prompts_in_use['system']},
+            {'role': 'user', 'content': f'{prompts_in_use["summary"]}\n{base_info}\n\nPaper Content:\n{text}'},
         ]
         content = chat_response(model_dict=summary_model_dict, messages=messages)
 
@@ -111,7 +134,7 @@ def literature_review(input_folder_path, output_folder=None):
                 + f'Character Count: {char_count}, Processing Time: {dt:.2f}s, Status: Summary Failed, Response: Unable to generate summary'
             )
 
-        raw_responses_folder.mkdir(exist_ok=True)
+        raw_responses_folder.mkdir(parents=True, exist_ok=True)
         md_path = raw_responses_folder / (file_path.stem + '.md')
         with Path.open(md_path, 'w', encoding='utf-8') as f:
             f.write(f'# Raw Response for {file_path.name}\n\n{final}\n\n{"=" * 80}\n')
@@ -122,26 +145,42 @@ def literature_review(input_folder_path, output_folder=None):
     return '\n\n---\n\n'.join(aggregated)
 
 
-def organize_responses_to_csv(combined_responses, output_folder=None):
-    """Convert aggregated raw responses into a structured CSV via AI."""
+def organize_responses_to_csv(
+    combined_responses: list | str,
+    output_folder: Path | None = None,
+    *,
+    ai_models_in_use: dict | None = None,
+    prompts_in_use: dict | None = None,
+):
+    """Convert aggregated raw responses into a structured CSV via AI.
+
+    Args:
+        combined_responses: Aggregated markdown or string content from summarization.
+        output_folder: Destination folder to write CSV. Defaults to 'output/'.
+
+    """
     if not combined_responses:
         log('Empty combined responses - skip CSV generation', level='warning')
         return None
-    output_folder = Path(output_folder or OUTPUT_CONFIG['output_folder'])
-    output_folder.mkdir(exist_ok=True)
+    output_folder = Path(output_folder) if output_folder else Path('output')
+    output_folder.mkdir(parents=True, exist_ok=True)
 
     csv_file = output_folder / f'{OUTPUT_CONFIG["csv_filename_prefix"]}-{timestamp}.csv'
 
-    sort_model_dict = AI_MODELS_IN_USE['sort_csv']
-    if len(combined_responses) > sort_model_dict['context_length'] * 3 // 4:
+    ai_models_in_use = ai_models_in_use or DEFAULT_AI_MODELS_IN_USE
+    prompts_in_use = prompts_in_use or DEFAULT_PROMPTS_IN_USE
+    sort_model_dict = ai_models_in_use['sort_csv']
+    # Accept both list of strings or a single string
+    combined_as_text = ''.join(combined_responses) if isinstance(combined_responses, list) else str(combined_responses)
+    if len(combined_as_text) > sort_model_dict['context_length'] * 3 // 4:
         msg = 'Combined responses exceed model context length'
-        log(msg, level='error', size=len(combined_responses))
+        log(msg, level='error', size=len(combined_as_text))
         raise RuntimeError(msg)
 
     log('Requesting CSV organization from model')
     messages = [
-        {'role': 'system', 'content': PROMPTS_IN_USE['system']},
-        {'role': 'user', 'content': f'{PROMPTS_IN_USE["sort_csv"]}\n\nRaw Data:\n{combined_responses}'},
+        {'role': 'system', 'content': prompts_in_use['system']},
+        {'role': 'user', 'content': f'{prompts_in_use["sort_csv"]}\n\nRaw Data:\n{combined_as_text}'},
     ]
     csv_content = chat_response(model_dict=sort_model_dict, messages=messages)
 
@@ -156,26 +195,84 @@ def organize_responses_to_csv(combined_responses, output_folder=None):
     return csv_file
 
 
-def review2csv(input_folder_path, output_folder=None):
-    """End-to-end pipeline: summarize all files then produce a CSV."""
-    raw_responses_folder_name = f'{OUTPUT_CONFIG["raw_responses_filename_prefix"]}-'
-    input_folder_path_obj = Path(input_folder_path)
-    if input_folder_path_obj.is_dir() and input_folder_path_obj.name.startswith(raw_responses_folder_name):
-        # Reuse existing raw responses if input folder is a raw responses folder
-        log('Reusing existing raw responses folder', folder=str(input_folder_path_obj))
-        md_files = sorted(input_folder_path_obj.glob('*.md'))
-        if not md_files:
-            log('No markdown files found in raw responses folder', level='warning', folder=str(input_folder_path_obj))
-            return None
-        combined = '\n\n---\n\n'.join(Path(md_file).read_text(encoding='utf-8') for md_file in md_files)
-    else:
-        combined = literature_review(input_folder_path, output_folder)
-        if not combined:
-            log('No summaries produced; aborting pipeline', level='warning')
-            return None
-    csv_path = organize_responses_to_csv(combined, output_folder)
-    if csv_path:
-        log('Pipeline success', csv=str(csv_path))
-    else:
-        log('Pipeline finished without CSV output', level='warning')
-    return csv_path
+def review2csv(
+    input_folder_path: Path,
+    output_folder: Path | None = None,
+    recursive: bool = False,
+    review_type_id: int | str | None = None,
+):
+    """End-to-end pipeline: summarize files then produce CSV.
+
+    Args:
+        input_folder_path: Root folder to process.
+        output_folder: Root output folder; when recursive=True, the structure under this root mirrors input.
+        recursive: If True, process all subfolders and mirror output structure.
+
+    Returns:
+        - If recursive is False: Path to the generated CSV or None.
+        - If recursive is True: Dict mapping each processed relative folder to its CSV Path (or None if failed).
+
+    """
+    input_root = Path(input_folder_path)
+    output_root = Path(output_folder) if output_folder else Path('output')
+
+    # Resolve runtime configuration
+    cfg = get_review_config(review_type_id)
+    ai_models_in_use = cfg['AI_MODELS_IN_USE']
+    prompts_in_use = cfg['PROMPTS_IN_USE']
+
+    raw_prefix = f'{OUTPUT_CONFIG["raw_responses_filename_prefix"]}-'
+
+    def process_single_folder(folder: Path, out_folder: Path):
+        # If folder itself is a raw-responses folder, reuse MDs
+        if folder.is_dir() and folder.name.startswith(raw_prefix):
+            log('Reusing existing raw responses folder', folder=str(folder))
+            md_files = sorted(folder.glob('*.md'))
+            if not md_files:
+                log('No markdown files found in raw responses folder', level='warning', folder=str(folder))
+                return None
+            combined_local = '\n\n---\n\n'.join(Path(md_file).read_text(encoding='utf-8') for md_file in md_files)
+        else:
+            combined_local = literature_review(
+                folder,
+                out_folder,
+                ai_models_in_use=ai_models_in_use,
+                prompts_in_use=prompts_in_use,
+            )
+            if not combined_local:
+                log('No summaries produced; skipping CSV', level='warning', folder=str(folder))
+                return None
+        csv_path_local = organize_responses_to_csv(
+            combined_local,
+            out_folder,
+            ai_models_in_use=ai_models_in_use,
+            prompts_in_use=prompts_in_use,
+        )
+        if csv_path_local:
+            log('Pipeline success', csv=str(csv_path_local), folder=str(folder))
+        else:
+            log('Pipeline finished without CSV output', level='warning', folder=str(folder))
+        return csv_path_local
+
+    if not recursive:
+        return process_single_folder(input_root, output_root)
+
+    # Recursive mode: traverse directories and process those with supported files or raw-responses
+    results: dict[str, Path | None] = {}
+    # Always include the root itself
+    candidate_dirs = {input_root}
+    candidate_dirs.update(p for p in input_root.rglob('*') if p.is_dir())
+
+    for folder in sorted(candidate_dirs):
+        # Determine if folder should be processed: contains supported files or is a raw-responses folder
+        has_supported = any(folder.glob(f'*{suf}') for suf in SUPPORTED_SUFFIXES)
+        is_raw = folder.name.startswith(raw_prefix)
+        if not has_supported and not is_raw:
+            continue
+        rel = folder.relative_to(input_root) if folder != input_root else Path()
+        out_folder = output_root / rel if rel != Path() else output_root
+        out_folder.mkdir(parents=True, exist_ok=True)
+        csvp = process_single_folder(folder, out_folder)
+        results[str(rel)] = csvp
+
+    return results

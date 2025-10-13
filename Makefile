@@ -2,7 +2,7 @@
 
 install:
 	pip install -U pip wheel
-	pip install -e ".[opt]"
+	pip install -e "."
 
 .PHONY: install-dev
 install-dev:

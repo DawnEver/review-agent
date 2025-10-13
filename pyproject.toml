@@ -28,10 +28,13 @@ dev = [
     "pre-commit",
     "ruff",
 ]
+crawl = [
+    "requests>=2.31.0",
+    "lxml>=4.9.3",
+]
 
 [project.scripts]
 review = "review_agent.__main__:main"
-
 
 # ===================
 # Build
@@ -92,6 +95,7 @@ ignore = [
     "N816", # Variable `use_unit_A_phase_matrix` in global scope should not be mixedCase
     "N818",#Exception name should be named with an Error suffix
     "S101",#Use of assert detected. The enclosed code will be removed when compiling to optimised bytecode.
+    "S311",# Standard pseudo-random generators are not suitable for cryptographic purposes
     "S603",#subprocess-without-shell-equals-true (S603)
     "SIM108",#Use ternary operator xxx instead of `if`-`else`-block
     "SLF001",# Private member accessed:

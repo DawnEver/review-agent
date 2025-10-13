@@ -1,18 +1,43 @@
-"""Configuration file
+"""Configuration for review types with runtime selection support.
 
-Modify these settings according to your needs
+You can select the review type at runtime via `get_review_config` or pass
+`review_type_id` into `review2csv`/CLI. Defaults preserved for backward compatibility.
 """
 
 from .ai_model import GEMINI_MODELS, OLLAMA_MODELS
 
-GEMINI_MODELS
-OLLAMA_MODELS
+# Public constants: available review types and default selection
+REVIEW_TYPE_NAMES = ['literature_review', 'automotive_article']
+REVIEW_TYPE_ID = 0  # Default; can be overridden at runtime
 
-REVIEW_TYPE_ID = 1  # Modify this to switch between different review types
-REVIEW_TYPE = ['literature_review', 'automotive_article'][REVIEW_TYPE_ID]
-match REVIEW_TYPE:
-    case 'literature_review':
-        AI_MODELS_IN_USE = {
+
+def get_review_config(review_type_id: int | str | None = None) -> dict:
+    """Build and return configuration for the given review type.
+
+    Args:
+        review_type_id: Either the index (int) into REVIEW_TYPE_NAMES, the
+            name (str) from REVIEW_TYPE_NAMES, or None to use the default REVIEW_TYPE_ID.
+
+    Returns:
+        Dict with keys: 'review_type', 'AI_MODELS_IN_USE', 'PROMPTS_IN_USE',
+        'csv_column_dict', 'extra_column_keys'.
+
+    """
+    # Resolve review type string
+    if review_type_id is None:
+        review_type = REVIEW_TYPE_NAMES[REVIEW_TYPE_ID]
+    elif isinstance(review_type_id, int):
+        review_type = REVIEW_TYPE_NAMES[review_type_id]
+    else:
+        # accept exact string; raise if invalid
+        if review_type_id not in REVIEW_TYPE_NAMES:
+            msg = f'Unknown review_type_id: {review_type_id}. Valid: {REVIEW_TYPE_NAMES}'
+            raise ValueError(msg)
+        review_type = review_type_id
+
+    # Build per-type model selection and columns
+    if review_type == 'literature_review':
+        ai_models_in_use = {
             # 'summary': GEMINI_MODELS['gemini-2.5-flash-lite'],
             # 'sort_csv': GEMINI_MODELS['gemini-2.5-flash-lite'],
             'summary': OLLAMA_MODELS['gpt-oss:20b'],
@@ -34,9 +59,8 @@ match REVIEW_TYPE:
             'Motor Type / Topology': 'Type of electric motor and topological structure (if applicable, otherwise "N/A")',
             'Key Performance Metrics': 'Critical technical indicators (if applicable, otherwise "N/A"; preserve any key numbers or quantitative results)',
         }
-
-    case 'automotive_article':
-        AI_MODELS_IN_USE = {
+    else:  # automotive_article
+        ai_models_in_use = {
             # 'summary': GEMINI_MODELS['gemini-2.5-flash-lite'],'sort_csv': GEMINI_MODELS['gemini-2.5-flash-lite'],
             'summary': GEMINI_MODELS['gemini-2.5-flash'],
             'sort_csv': GEMINI_MODELS['gemini-2.5-flash'],
@@ -70,17 +94,17 @@ match REVIEW_TYPE:
             'Other Key Performance Metrics': 'Critical technical indicators (if applicable, otherwise "N/A"; preserve any key numbers or quantitative results)',
         }
 
+    extra_column_keys = [
+        'File Name',
+        #  'File Path',
+        'Character Count',
+        'Processing Time (s)',
+        'Status',
+    ]
 
-extra_column_keys = [
-    'File Name',
-    #  'File Path',
-    'Character Count',
-    'Processing Time (s)',
-    'Status',
-]
-PROMPTS_IN_USE = {
-    'system': 'You are a large language model for academic use. Keep responses concise, structured, and citation-aware.',
-    'summary': f"""
+    prompts_in_use = {
+        'system': 'You are a large language model for academic use. Keep responses concise, structured, and citation-aware.',
+        'summary': f"""
         Analyze the following academic paper and extract key information. Provide a comprehensive summary that includes:
         {'\n'.join(csv_column_dict.values())}
 
@@ -89,7 +113,7 @@ PROMPTS_IN_USE = {
 
         /think
         """,
-    'sort_csv': f"""
+        'sort_csv': f"""
         Convert the provided raw data from multiple sources into a single, well-formatted CSV file.
 
         **CSV Format Requirements:**
@@ -115,4 +139,18 @@ PROMPTS_IN_USE = {
 
         /no_think
         """,
-}
+    }
+
+    return {
+        'review_type': review_type,
+        'AI_MODELS_IN_USE': ai_models_in_use,
+        'PROMPTS_IN_USE': prompts_in_use,
+        'csv_column_dict': csv_column_dict,
+        'extra_column_keys': extra_column_keys,
+    }
+
+
+# Backward-compatible exports using the default REVIEW_TYPE_ID
+_defaults = get_review_config(REVIEW_TYPE_ID)
+AI_MODELS_IN_USE = _defaults['AI_MODELS_IN_USE']
+PROMPTS_IN_USE = _defaults['PROMPTS_IN_USE']
