@@ -20,6 +20,22 @@ auto_key_list = [
     'ferrari-purosangue',
     'ferrari-amalfi',
     'ferrari-roma-spider',
+    '296-speciale',
+    '296-speciale-a',
+    'sf90-xx-stradale',
+    'sf90-xx-spider',
+    '812-competizione',
+    '812-competizione-a',
+    'ferrari-daytona-sp3',
+    'monza-sp1',
+    'monza-sp2',
+    'f80',
+    'laferrari-aperta',
+    'laferrari',
+    'enzo-ferrari',
+    'f50',
+    'f40',
+    'gto',
 ]
 ferrari_auto_base_url = 'https://www.ferrari.com/en-EN/auto/'
 

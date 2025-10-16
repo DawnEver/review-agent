@@ -37,6 +37,8 @@ timestamp = datetime.now().strftime(OUTPUT_CONFIG['timestamp_format'])
 # Supported input file suffixes
 SUPPORTED_SUFFIXES = ('.txt', '.md', '.pdf', '.html', '.htm')
 
+FILE_DELIMITER = '\n\n---\n\n---\n\n'  # delimiter between raw md files in combined text
+
 
 def literature_review(
     input_folder_path: Path,
@@ -142,7 +144,7 @@ def literature_review(
 
     aggregated = [unit_process(i_file=i, file_path=p) for i, p in enumerate(file_path_list)]
     log('Completed summarization of batch', total=len(aggregated))
-    return '\n\n---\n\n'.join(aggregated)
+    return FILE_DELIMITER.join(aggregated)
 
 
 def organize_responses_to_csv(
@@ -172,25 +174,115 @@ def organize_responses_to_csv(
     sort_model_dict = ai_models_in_use['sort_csv']
     # Accept both list of strings or a single string
     combined_as_text = ''.join(combined_responses) if isinstance(combined_responses, list) else str(combined_responses)
-    if len(combined_as_text) > sort_model_dict['context_length'] * 3 // 4:
-        msg = 'Combined responses exceed model context length'
-        log(msg, level='error', size=len(combined_as_text))
-        raise RuntimeError(msg)
 
-    log('Requesting CSV organization from model')
-    messages = [
-        {'role': 'system', 'content': prompts_in_use['system']},
-        {'role': 'user', 'content': f'{prompts_in_use["sort_csv"]}\n\nRaw Data:\n{combined_as_text}'},
-    ]
-    csv_content = chat_response(model_dict=sort_model_dict, messages=messages)
+    # Helper: split text into chunks smaller than context, preserving full lines
+    def _chunk_text_preserving_lines(text: str, limit: int) -> list[str]:
+        chunks, current, cur_len = [], [], 0
+        for ln in text.splitlines():
+            ln_len = len(ln) + 1  # reinserting newline on join
+            if ln_len > limit:
+                msg = 'A single line exceeds the model context limit; cannot chunk without splitting lines.'
+                raise RuntimeError(msg)
+            if current and cur_len + ln_len > limit:
+                chunks.append('\n'.join(current))
+                current, cur_len = [ln], ln_len
+            else:
+                current.append(ln)
+                cur_len += ln_len
+        if current:
+            chunks.append('\n'.join(current))
+        return chunks
 
-    if csv_content.startswith('```'):
-        first_newline = csv_content.find('\n')
-        if first_newline != -1:
-            csv_content = csv_content[first_newline + 1 :]
-    csv_content = csv_content.removesuffix('```').strip()
+    # Helper: first try to chunk by md_file units (joined by the known delimiter),
+    # so that we do not split inside a single md file. If a unit itself exceeds
+    # the limit, we fall back to line-preserving chunking for that unit only.
+    def _chunk_by_mdfile_units(text: str, limit: int, delimiter: str = FILE_DELIMITER) -> list[str]:
+        if delimiter not in text:
+            # No clear unit boundary; fall back to line-based chunking
+            return _chunk_text_preserving_lines(text, limit)
+
+        units = text.split(delimiter)
+        chunks, parts, cur_len = [], [], 0
+        for i, unit in enumerate(units):
+            add_len = len(unit) + (len(delimiter) if parts else 0)
+            if cur_len + add_len > limit:
+                if parts:
+                    chunks.append(delimiter.join(parts))
+                    parts, cur_len = [], 0
+                if len(unit) <= limit:
+                    parts, cur_len = [unit], len(unit)
+                else:
+                    log(
+                        'Single md_file exceeds context; splitting within file',
+                        level='warning',
+                        unit_index=i,
+                        unit_chars=len(unit),
+                        limit=limit,
+                    )
+                    chunks.extend(_chunk_text_preserving_lines(unit, limit))
+            else:
+                parts.append(unit)
+                cur_len += add_len
+        if parts:
+            chunks.append(delimiter.join(parts))
+        return chunks
+
+    # Helper: normalize model CSV output to non-empty lines without fences
+    def _normalize_csv_lines(text: str) -> list[str]:
+        if text.startswith('```'):
+            nl = text.find('\n')
+            text = text[nl + 1 :] if nl != -1 else ''
+        return [ln for ln in text.removesuffix('```').strip().splitlines() if ln.strip()]
+
+    # Use a safety margin similar to summarization to avoid boundary issues
+    max_chunk = sort_model_dict['context_length'] * 3 // 4
+    if max_chunk <= 0:
+        max_chunk = 2000  # fallback sane default
+
+    # Create chunks if needed (prefer preserving md_file boundaries)
+    if len(combined_as_text) > max_chunk:
+        chunks = _chunk_by_mdfile_units(combined_as_text, max_chunk)
+        log(
+            'Combined responses exceed context; chunking (preserve md_file boundaries)',
+            total_chars=len(combined_as_text),
+            chunks=len(chunks),
+            limit=max_chunk,
+        )
+    else:
+        chunks = [combined_as_text]
+
+    # Process each chunk and merge CSVs (keep only the first header)
+    header_line: str | None = None
+    merged_lines: list[str] = []
+
+    for idx, chunk in enumerate(chunks, start=1):
+        log(
+            'Requesting CSV organization from model (chunk)',
+            chunk_index=idx,
+            chunks_total=len(chunks),
+            chunk_chars=len(chunk),
+        )
+        messages = [
+            {'role': 'system', 'content': prompts_in_use['system']},
+            {'role': 'user', 'content': f'{prompts_in_use["sort_csv"]}\n\nRaw Data:\n{chunk}'},
+        ]
+        csv_content = chat_response(model_dict=sort_model_dict, messages=messages)
+        lines = _normalize_csv_lines(csv_content)
+        if not lines:
+            log('Empty CSV content from chunk', level='warning', chunk_index=idx)
+            continue
+        if header_line is None:
+            header_line = lines[0]
+            merged_lines.extend(lines)
+        else:
+            # If the first line equals the previously captured header, skip it
+            start_idx = 1 if lines[0] == header_line else 0
+            merged_lines.extend(lines[start_idx:])
+
+    # Write merged CSV
+    final_csv = '\n'.join(merged_lines).strip()
     with Path.open(csv_file, 'w', encoding='utf-8-sig') as f:
-        f.write(csv_content)
+        f.write(final_csv)
     log('CSV file written', path=str(csv_file), bytes=csv_file.stat().st_size)
     return csv_file
 
@@ -231,7 +323,7 @@ def review2csv(
             if not md_files:
                 log('No markdown files found in raw responses folder', level='warning', folder=str(folder))
                 return None
-            combined_local = '\n\n---\n\n'.join(Path(md_file).read_text(encoding='utf-8') for md_file in md_files)
+            combined_local = FILE_DELIMITER.join(Path(md_file).read_text(encoding='utf-8') for md_file in md_files)
         else:
             combined_local = literature_review(
                 folder,
