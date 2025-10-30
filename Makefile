@@ -10,8 +10,6 @@ install-dev:
 	pip install -e ".[dev,web]"
 	python -m pre-commit install
 	python -m pre-commit autoupdate
-	crawl4ai-setup
-
 
 .PHONY: lint
 lint:
