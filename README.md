@@ -84,14 +84,12 @@ The project uses LiteLLM to talk to multiple providers. Two are configured out o
 	- Optional env: OLLAMA_HOST (for remote/custom ports)
 
 - Google Gemini (gemini-2.5-flash / flash-lite / pro, etc.)
-	- Provide GOOGLE_API_KEY via .env or environment variables
+	- Provide GEMINI_API_KEY via .env or environment variables
 
 The app loads settings from .env (dotenv). Example:
 
 ```env
-GOOGLE_API_KEY=your_api_key
-OLLAMA_HOST=http://127.0.0.1:11434
-# LITELLM_LOG=INFO  # enable LiteLLM debug logs if needed
+GEMINI_API_KEY=your_api_key
 ```
 
 
@@ -253,7 +251,7 @@ ollama pull gpt-oss:20b
 3) If using Gemini, set env or .env:
 
 ```env
-GOOGLE_API_KEY=your_api_key
+GEMINI_API_KEY=your_api_key
 ```
 
 4) Run:
