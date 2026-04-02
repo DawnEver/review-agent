@@ -264,7 +264,11 @@ def download_all_pdfs_from_csv(
     if 'local_pdf_paths' not in df.columns:
         df['local_pdf_paths'] = ''
 
-    url_columns = [c for c in ('material_pdf_url', 'datasheet_pdf_url') if c in df.columns]
+    target_urls = (
+        # 'material_pdf_url',
+        'datasheet_pdf_url',
+    )
+    url_columns = [c for c in target_urls if c in df.columns]
     if not url_columns:
         log('No PDF URL columns found in CSV, skip PDF download', LEVEL='WARNING')
         return
@@ -336,91 +340,92 @@ def main() -> None:
     output_csv_path = datasheet_folder_path / 'ferroxcube_datasheet_table.csv'
     all_table_rows, processed_keys = load_checkpoint(output_csv_path)
 
-    for s_sel, transformer_name in transformer_map.items():
-        s_sel_url = step1_base_url + f'?s_sel={s_sel}'
-        log(f'Checking URL: {s_sel_url}', LEVEL='INFO')
-        s_sel_response = http_get(session, s_sel_url, timeout=30)
+    if 0:
+        for s_sel, transformer_name in transformer_map.items():
+            s_sel_url = step1_base_url + f'?s_sel={s_sel}'
+            log(f'Checking URL: {s_sel_url}', LEVEL='INFO')
+            s_sel_response = http_get(session, s_sel_url, timeout=30)
 
-        series_map = extract_select_options(s_sel_response.text, xpath_series_sel)
-        log(f'Loaded {len(series_map)} series options for s_sel={s_sel}', LEVEL='INFO')
+            series_map = extract_select_options(s_sel_response.text, xpath_series_sel)
+            log(f'Loaded {len(series_map)} series options for s_sel={s_sel}', LEVEL='INFO')
 
-        material_map = extract_select_options(s_sel_response.text, xpath_material_sel)
-        log(f'Loaded {len(material_map)} material options for s_sel={s_sel}', LEVEL='INFO')
+            material_map = extract_select_options(s_sel_response.text, xpath_material_sel)
+            log(f'Loaded {len(material_map)} material options for s_sel={s_sel}', LEVEL='INFO')
 
-        if not series_map:
-            log(f'No series options found for s_sel={s_sel}, skip', LEVEL='WARNING')
-            continue
-        if not material_map:
-            log(f'No material options found for s_sel={s_sel}, skip', LEVEL='WARNING')
-            continue
+            if not series_map:
+                log(f'No series options found for s_sel={s_sel}, skip', LEVEL='WARNING')
+                continue
+            if not material_map:
+                log(f'No material options found for s_sel={s_sel}, skip', LEVEL='WARNING')
+                continue
 
-        transformer_output_path = html_folder_path / sanitize_name(
-            transformer_name,
-            empty_fallback='unknown',
-            strip_trailing_dot=False,
-        )
-        for series_sel, series_name in series_map.items():
-            series_folder_path = transformer_output_path / sanitize_name(
-                series_name,
+            transformer_output_path = html_folder_path / sanitize_name(
+                transformer_name,
                 empty_fallback='unknown',
                 strip_trailing_dot=False,
             )
-            for material_sel, material_name in material_map.items():
-                material_folder_path = series_folder_path / sanitize_name(
-                    material_name,
+            for series_sel, series_name in series_map.items():
+                series_folder_path = transformer_output_path / sanitize_name(
+                    series_name,
                     empty_fallback='unknown',
                     strip_trailing_dot=False,
                 )
-                material_folder_path.mkdir(parents=True, exist_ok=True)
-                file_name = f'{s_sel}-{series_sel}-{material_sel}.html'
-                file_path = material_folder_path / file_name
-                crawl_key = (s_sel, series_sel, material_sel)
+                for material_sel, material_name in material_map.items():
+                    material_folder_path = series_folder_path / sanitize_name(
+                        material_name,
+                        empty_fallback='unknown',
+                        strip_trailing_dot=False,
+                    )
+                    material_folder_path.mkdir(parents=True, exist_ok=True)
+                    file_name = f'{s_sel}-{series_sel}-{material_sel}.html'
+                    file_path = material_folder_path / file_name
+                    crawl_key = (s_sel, series_sel, material_sel)
 
-                if crawl_key in processed_keys:
+                    if crawl_key in processed_keys:
+                        log(
+                            f'Skip processed params: s_sel={s_sel}, series_sel={series_sel}, material_sel={material_sel}',
+                            LEVEL='INFO',
+                        )
+                        continue
+
+                    rows = process_one_combo(
+                        session=session,
+                        s_sel=s_sel,
+                        transformer_name=transformer_name,
+                        series_sel=series_sel,
+                        series_name=series_name,
+                        material_sel=material_sel,
+                        material_name=material_name,
+                        step2_base_url=step2_base_url,
+                        file_path=file_path,
+                    )
+                    if not rows:
+                        log(
+                            f'No data table rows found for s_sel={s_sel}, series_sel={series_sel}, material_sel={material_sel}',
+                            LEVEL='WARNING',
+                        )
+                        processed_keys.add(crawl_key)
+                        continue
+
+                    all_table_rows.extend(rows)
+                    processed_keys.add(crawl_key)
+                    save_checkpoint(all_table_rows, output_csv_path)
                     log(
-                        f'Skip processed params: s_sel={s_sel}, series_sel={series_sel}, material_sel={material_sel}',
+                        f'Extracted {len(rows)} table rows for s_sel={s_sel}, series_sel={series_sel}, material_sel={material_sel}',
                         LEVEL='INFO',
                     )
-                    continue
 
-                rows = process_one_combo(
-                    session=session,
-                    s_sel=s_sel,
-                    transformer_name=transformer_name,
-                    series_sel=series_sel,
-                    series_name=series_name,
-                    material_sel=material_sel,
-                    material_name=material_name,
-                    step2_base_url=step2_base_url,
-                    file_path=file_path,
-                )
-                if not rows:
-                    log(
-                        f'No data table rows found for s_sel={s_sel}, series_sel={series_sel}, material_sel={material_sel}',
-                        LEVEL='WARNING',
-                    )
-                    processed_keys.add(crawl_key)
-                    continue
-
-                all_table_rows.extend(rows)
-                processed_keys.add(crawl_key)
-                save_checkpoint(all_table_rows, output_csv_path)
-                log(
-                    f'Extracted {len(rows)} table rows for s_sel={s_sel}, series_sel={series_sel}, material_sel={material_sel}',
-                    LEVEL='INFO',
-                )
-
-    if all_table_rows:
-        save_checkpoint(all_table_rows, output_csv_path)
-        log(f'Saved {len(all_table_rows)} rows to {output_csv_path}', LEVEL='INFO')
-    else:
-        log('No table rows extracted. CSV was not generated.', LEVEL='WARNING')
-
-    download_all_pdfs_from_csv(
-        session=session,
-        output_csv_path=output_csv_path,
-        pdf_folder_path=pdf_folder_path,
-    )
+        if all_table_rows:
+            save_checkpoint(all_table_rows, output_csv_path)
+            log(f'Saved {len(all_table_rows)} rows to {output_csv_path}', LEVEL='INFO')
+        else:
+            log('No table rows extracted. CSV was not generated.', LEVEL='WARNING')
+    if 1:
+        download_all_pdfs_from_csv(
+            session=session,
+            output_csv_path=output_csv_path,
+            pdf_folder_path=pdf_folder_path,
+        )
 
 
 if __name__ == '__main__':
