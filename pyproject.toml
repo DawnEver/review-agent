@@ -34,7 +34,6 @@ crawl = [
 ]
 
 [project.scripts]
-review = "review_agent.__main__:main"
 csv2md = "review_agent.csv2md:cli"
 
 # ===================

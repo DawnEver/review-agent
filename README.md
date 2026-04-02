@@ -1,44 +1,42 @@
-# ReviewAgent — Batch Literature Review and Structured CSV Export
+# ReviewAgent — Batch Review and Structured CSV Export
 
-ReviewAgent is a lightweight batch-processing tool for documents. It reads PDF/HTML/TXT/Markdown sources, generates per-file structured summaries using local or cloud LLMs, archives raw Markdown responses, and consolidates everything into a clean CSV—ready for analysis or import into Excel/Notion/BI tools.
+ReviewAgent is a compact pipeline for turning mixed documents into structured CSV.
+It supports local/cloud LLMs, keeps per-file raw markdown for traceability, and produces auditable outputs.
 
 Use cases:
-- Academic literature reviews
-- Information extraction from industry reports or car model articles
+- Academic literature review and evidence extraction
+- Batch extraction from reports, specs, and automotive pages
 
 
 ## Core Features
 
-- Batch text extraction and cleanup
-	- Supports .pdf / .html / .htm / .txt / .md
-	- For PDF/HTML, also emits a cleaned text copy for auditing
-- Per-file AI summarization
-	- Choose local Ollama models or online models like Gemini (via LiteLLM)
-	- Stores one Markdown response per document for traceability
-- Unified CSV consolidation
-	- Aggregates all raw responses to a single CSV with consistent columns and escaping rules
-- Recursive processing
-	- Optionally process subfolders; output structure mirrors the input
-- Logging and provenance
-	- Logs and raw artifacts are saved under output/, making the pipeline auditable
+- Multi-format ingestion: `.pdf`, `.html`, `.htm`, `.txt`, `.md`
+- Two-stage pipeline: per-file summary -> unified CSV
+- Optional recursive processing with mirrored output folder structure
+- Raw artifacts preserved for reproducibility:
+	- Raw model responses (`.md`)
+	- Cleaned extracted text for PDF/HTML (`.txt`)
+	- Timestamped logs and final CSV
+
 
 ## Installation and Requirements
-- Python 3.13+
-- Commands shown for Windows cmd
-- Choose one option: pip or uv
+
+- Python `3.13+`
+- Command examples below are for Windows `cmd`
+- Choose one: `pip` or `uv`
 
 ### Option A — pip
 
-```cmd
+```sh
 python -m venv .venv
 .venv\Scripts\activate
 pip install -U pip
 pip install .
 ```
 
-Dev install (editable) and extras:
+Dev + crawler extras:
 
-```cmd
+```sh
 pip install -e .[dev,crawl]
 python -m pre-commit install
 python -m pre-commit autoupdate
@@ -46,47 +44,45 @@ python -m pre-commit autoupdate
 
 ### Option B — uv
 
-If uv is not installed:
+If `uv` is not installed:
 
-```cmd
+```sh
 pipx install uv
 ```
 
-Create venv and install:
+Create env and install:
 
-```cmd
+```sh
 uv venv .venv
 .venv\Scripts\activate
 uv pip install .
 ```
 
-Dev install (editable) and extras:
+Dev + crawler extras:
 
-```cmd
+```sh
 uv pip install -e .[dev,crawl]
-uv run pre-commit install
-uv run pre-commit autoupdate
+uv run pre_commit install
+uv run pre_commit autoupdate
 ```
 
 
 ## Models and API Keys
 
-The project uses LiteLLM to talk to multiple providers. Two are configured out of the box:
+Model calls are routed through LiteLLM.
 
-- Local Ollama (examples: gpt-oss:20b / gemma3:27b / qwen3:30b-a3b)
-	- Install and run Ollama on Windows
-	- Pull model(s) ahead of time, e.g.:
+- Ollama (local)
+	- Example model: `gpt-oss:20b`
+	- Pull before use:
 
-		```cmd
-		ollama pull gpt-oss:20b
-		```
+	```sh
+	ollama pull gpt-oss:20b
+	```
 
-	- Optional env: OLLAMA_HOST (for remote/custom ports)
+	- Optional: `OLLAMA_HOST`
 
-- Google Gemini (gemini-2.5-flash / flash-lite / pro, etc.)
-	- Provide GEMINI_API_KEY via .env or environment variables
-
-The app loads settings from .env (dotenv). Example:
+- Gemini (cloud)
+	- Provide `GEMINI_API_KEY` in environment or `.env`
 
 ```env
 GEMINI_API_KEY=your_api_key
@@ -95,198 +91,178 @@ GEMINI_API_KEY=your_api_key
 
 ## Quick Start (Interactive CLI)
 
-After installation, run:
+Current project entry is script-first (via examples). Minimal run:
 
-```cmd
-review
+```sh
+python examples\review_agent\review2csv_literature.py
 ```
 
-or:
+Or use the automotive schema:
 
-```cmd
-python -m review_agent
+```sh
+python examples\review_agent\review2csv_automotive.py
 ```
 
-Then answer the prompts:
-1) Input folder containing documents (default: ./input)
-2) Output folder (default: ./output)
-3) Process subfolders recursively? (y/N)
-4) Select review type (0=literature_review, 1=automotive_article) [default: 1]
-
-Outputs include:
-- Raw AI responses per file (Markdown): output/raw_responses-YYYYMMDD_HHMM/
-- Cleaned text for PDF/HTML: output/extracted_texts-YYYYMMDD_HHMM/
-- Consolidated CSV: output/review-YYYYMMDD_HHMM.csv
-- Logs: output/logs/YYYYMMDD_HH.log
+Both scripts read from `./input` and write to `./output`.
 
 
 ## Important: Task Type and Models
 
-There are two built-in review types:
+Runtime configuration is explicit and passed to `review2csv(...)`.
 
-- 0 = `literature_review`
-	- Default model preset: local Ollama (gpt-oss:20b)
-	- CSV columns include:
-		- Title / Author(s) / Year / Source Type / Source Name/Identifier / Affiliation
-		- One-Sentence Summary / Abstract / Keywords
-		- Innovations/Key Contributions / Main Methodology / Conclusions
-		- Motor Type / Topology / Key Performance Metrics
+- Build model configs with `build_model(...)`
+- Build runtime config with `build_runtime_config(...)`
+- Define extraction schema in `csv_columns`
 
-- 1 = `automotive_article`
-	- Default model preset: Gemini (gemini-2.5-flash)
-	- CSV columns include (excerpt):
-		- Model Name / Body Type / Powertrain / Engine Type / Architecture
-		- Total Power / Specific Output / Electric Motor / Electric Only Max Speed
-		- Fuel Consumption (WLTP) / CO2 Emissions (WLTP) / Electric Consumption
-		- Weight-to-Power Ratio / Year / Innovations / Other Key Performance Metrics
-
-How to select the review type:
-
-- Interactive CLI: you’ll be prompted to choose it (default 1).
-- Programmatic: pass `review_type_id` to `review2csv` (accepts int or name):
-
-	```python
-	from review_agent.review import review2csv
-
-	# 0 or 'literature_review'; 1 or 'automotive_article'
-	review2csv('./input', './output', review_type_id=0)
-	# or
-	review2csv('./input', './output', review_type_id='automotive_article')
-	```
-
-- Global default: you can still set the default in `src/review_agent/config.py`:
-
-	```python
-	REVIEW_TYPE_ID = 1  # default fallback if not specified at runtime
-	```
-
-You can customize model presets and parameters in `src/review_agent/ai_model.py` and the per-type selections in `src/review_agent/config.py`.
+See:
+- `src/review_agent/config.py`
+- `examples/review_agent/review2csv_literature.py`
+- `examples/review_agent/review2csv_automotive.py`
 
 
 ## Input and Output
 
-- Input (default ./input)
-	- Supports .txt / .md / .pdf / .html / .htm
-	- Place a batch in one folder; optionally organize topics into subfolders and enable recursion
+- Input (default `./input`)
+	- Supported: `.txt`, `.md`, `.pdf`, `.html`, `.htm`
+	- Can be a normal source folder or an existing `raw_responses-*` folder
 
-- Output (default ./output)
-	- raw_responses-YYYYMMDD_HHMM/: raw Markdown per document
-	- extracted_texts-YYYYMMDD_HHMM/: cleaned text files for PDF/HTML
-	- review-YYYYMMDD_HHMM.csv: consolidated structured CSV
-	- logs/: hourly rotated logs
-
-Timestamp naming is controlled by OUTPUT_CONFIG in `src/review_agent/review.py`.
+- Output (default `./output`)
+	- `raw_responses-YYYYMMDD_HHMM/`: one markdown response per source file
+	- `extracted_texts-YYYYMMDD_HHMM/`: cleaned text for PDF/HTML
+	- `review-YYYYMMDD_HHMM.csv`: final consolidated CSV
+	- `logs/YYYYMMDD_HH.log`: runtime logs
 
 
 ## How the CLI Works
 
-The `review` command will:
-1) Discover all supported files in the input folder
-2) Extract text (`extract_text.py`); PDF/HTML also save cleaned text
-3) Summarize each file using the selected model and prompts (`ai_chat_response.py`, `config.py`)
-4) Ask the model to convert all raw Markdown responses into a single CSV with strict field order and escaping rules
+Pipeline behavior (`review2csv`) in order:
 
-Reusing existing raw responses (skip re-summarization):
-- Point the input folder to an existing `raw_responses-YYYYMMDD_HHMM/` directory
-- The pipeline will bypass summarization and only build the CSV
+1) Discover supported files in the input folder
+2) Extract text (`extract_text.py`)
+3) Summarize each file via LiteLLM (`ai_chat_response.py`)
+4) Convert aggregated raw markdown to strict CSV schema
+
+Raw-response reuse mode:
+- If input folder name starts with `raw_responses-`, the pipeline skips re-summarization and only builds CSV
 
 
 ## Context handling and chunking
 
-To make the CSV consolidation robust on large batches, the pipeline uses conservative context budgeting and chunking:
+To reduce context-overflow risk:
 
 - Per-file summarization
-	- Each file’s text is truncated to about 75% of the selected model’s context length before calling the model.
+	- Input text is truncated to ~75% of model context length
 
-- CSV consolidation over aggregated responses
-	- The aggregated raw responses are split using a file-level delimiter defined as `FILE_DELIMITER` in `src/review_agent/review.py`.
-	- Chunking packs multiple md files into one chunk when possible, but never splits a single md file across mixed chunks.
-	- If one md file alone exceeds the limit, it is split by lines into dedicated sub-chunks; these sub-chunks are not mixed with other files.
-	- Only the first CSV header is kept; subsequent chunk outputs with an identical header have that header removed before merging.
-
-Notes:
-- The effective chunk size during CSV consolidation also uses ~75% of the model’s context length as a safety margin.
-- You can inspect timestamps, output file names, and the delimiter constant in `src/review_agent/review.py`.
+- CSV consolidation
+	- Aggregated text is chunked by file boundary delimiter (`FILE_DELIMITER`)
+	- One oversized file is split line-wise only for that file
+	- Duplicate CSV headers from later chunks are removed during merge
 
 
 ## Code Map (Short)
 
-- `src/review_agent/__main__.py`: interactive CLI entry
-- `src/review_agent/review.py`: main pipeline (single folder, recursive mode, CSV generation)
-- `src/review_agent/extract_text.py`: text extraction/cleanup for PDF/HTML/TXT/MD
-- `src/review_agent/ai_chat_response.py`: LiteLLM wrapper to call models
+- `src/review_agent/review.py`: core pipeline and recursive processing
+- `src/review_agent/config.py`: model/runtime config builders and prompt templates
+- `src/review_agent/extract_text.py`: PDF/HTML/TXT/MD text extraction
+- `src/review_agent/ai_chat_response.py`: LiteLLM wrapper
+- `src/review_agent/csv2md.py`: CSV -> Markdown utility
+- `src/review_agent/logger.py`: logging helper
+
 
 ## CSV → Markdown helper (csv2md)
 
-Convert the exported CSV into a Markdown table file (by default, a same-named .md is created):
+Convert an exported CSV to a markdown table:
 
-```cmd
-csv2md -i output\review-20251016_1110.csv -c "Title,Year,Source Type,One-Sentence Summary"
+```sh
+csv2md -i output\review-20260402_1711.csv -c "Title,Year,Source Type,One-Sentence Summary"
 ```
 
-Optional flags:
-- `-o/--output` specify the output .md file path
-- `-c/--columns` choose columns to include, comma-separated
-- `--sort-by` / `--desc` sorting
-- `--max-rows` limit the number of output rows
-
-- `src/review_agent/ai_model.py`: model presets and context lengths
-- `src/review_agent/config.py`: task type, prompts/columns, and selected models
-
-Runtime configuration helper:
-- `get_review_config(review_type_id)`: builds the model/prompt/columns for the chosen review type
-- `src/review_agent/logger.py`: unified console and file logging
-- `examples/`: sample scripts (including simple crawlers)
+Common options:
+- `-o, --output`: output markdown path
+- `-c, --columns`: comma-separated selected columns
+- `--sort-by` + `--desc`: sorting
+- `--max-rows`: row limit
 
 
 ## Example: Minimal End-to-End
 
-1) Put some .pdf/.html/.txt/.md files into `input/`
-2) If using Ollama, pull the model first:
+### A) Review pipeline examples
 
-```cmd
-ollama pull gpt-oss:20b
+1) Put files into `input/` (`.pdf/.html/.txt/.md`)
+2) Choose one script:
+
+```sh
+python examples\review_agent\review2csv_literature.py
 ```
 
-3) If using Gemini, set env or .env:
+or
 
-```env
-GEMINI_API_KEY=your_api_key
+```sh
+python examples\review_agent\review2csv_automotive.py
 ```
 
-4) Run:
+3) Check outputs in `output/`
 
-```cmd
-review
+### B) Crawler examples (`examples/crawl_agent`)
+
+Install crawler deps first:
+
+```sh
+pip install -e .[crawl]
 ```
 
-5) Inspect outputs in `output/`
+Run crawler scripts:
+
+```sh
+python examples\crawl_agent\ferrari_models.py
+python examples\crawl_agent\doe_us_reports.py
+python examples\crawl_agent\apc_uk_reports.py
+```
+
+Typical crawler outputs:
+- downloaded pages/reports under `output/`
+- metadata CSV under `output/reports_csv/`
+
+### C) Dongchedi multi-step example
+
+```sh
+python examples\crawl_agent\dongchedi\step1_brand_ids_to_car_ids.py
+python examples\crawl_agent\dongchedi\step2_car_id_to_tables.py
+python examples\crawl_agent\dongchedi\step3_post_process.py
+```
+
+Note: Dongchedi scripts include some hardcoded local paths; adjust before running.
 
 
 ## FAQ
 
-- CSV is wrapped in ```csv fences?
-	- We strip code fences in the CSV step; update to the latest version if needed
-- Context length exceeded?
-	- Per-file input is truncated at ~75% of the model’s context; the CSV step also checks aggregate length
-- PDF extraction empty or garbled?
-	- Depends on the PDF structure; consider OCR or converting to text first
-- `review` not found on Windows?
-	- Ensure `pip install .` succeeded, or run `python -m review_agent`
+- Q: CSV output is wrapped in markdown fences?
+	- A: Fence stripping is handled during CSV organization.
+
+- Q: Context length exceeded?
+	- A: The pipeline applies conservative truncation/chunking (~75% budget).
+
+- Q: PDF extraction is empty/garbled?
+	- A: It depends on PDF structure; OCR or pre-converted text often helps.
+
+- Q: How to skip summarization and only build CSV?
+	- A: Point input to an existing `raw_responses-*` folder.
 
 
 ## Development
 
-Formatting/quality tools: Ruff, pre-commit, commitizen (see `pyproject.toml`).
+Quality tooling is defined in `pyproject.toml` (Ruff, pre-commit, commitizen).
 
-```cmd
+```sh
 pip install -e .[dev]
 ruff check --fix
+ruff format
 ```
 
-Contributions are welcome. You can extend prompts/columns in `config.py` to adapt to new extraction scenarios.
+If you change extraction schema, update `csv_columns` in your example config.
 
 
 ## License
 
-This project relies on open-source dependencies and local/cloud models; use it in compliance with respective licenses and API terms.
+This project is licensed under GNU LGPL v3.0 (`LGPL-3.0-only`).
+See `LICENSE` for details.

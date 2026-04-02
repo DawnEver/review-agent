@@ -1,4 +1,4 @@
-"""Batch literature review utilities.
+"""Batch review utilities.
 
 This module provides functions to:
     * Extract text from files.
@@ -10,19 +10,11 @@ Entry point (CLI) asks for a folder path and produces both raw markdown response
 and a timestamped CSV summarizing the papers.
 """
 
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
 from .ai_chat_response import chat_response
-from .config import (
-    AI_MODELS_IN_USE as DEFAULT_AI_MODELS_IN_USE,
-)
-from .config import (
-    PROMPTS_IN_USE as DEFAULT_PROMPTS_IN_USE,
-)
-from .config import (
-    get_review_config,
-)
 from .extract_text import extract_text_from_html, extract_text_from_pdf, extract_text_from_txt
 from .logger import log
 
@@ -32,6 +24,7 @@ OUTPUT_CONFIG = {
     'raw_responses_filename_prefix': 'raw_responses',
     'timestamp_format': '%Y%m%d_%H%M',
 }
+raw_prefix = f'{OUTPUT_CONFIG["raw_responses_filename_prefix"]}-'
 timestamp = datetime.now().strftime(OUTPUT_CONFIG['timestamp_format'])
 
 # Supported input file suffixes
@@ -40,12 +33,11 @@ SUPPORTED_SUFFIXES = ('.txt', '.md', '.pdf', '.html', '.htm')
 FILE_DELIMITER = '\n\n---\n\n---\n\n'  # delimiter between raw md files in combined text
 
 
-def literature_review(
+def review_content(
     input_folder_path: Path,
     output_folder: Path | None = None,
     *,
-    ai_models_in_use: dict | None = None,
-    prompts_in_use: dict | None = None,
+    runtime_config: dict | None = None,
 ):
     """Summarize all files in a single folder and return aggregated raw responses.
 
@@ -66,8 +58,9 @@ def literature_review(
         return ''
 
     raw_responses_folder = output_folder / f'{OUTPUT_CONFIG["raw_responses_filename_prefix"]}-{timestamp}'
-    ai_models_in_use = ai_models_in_use or DEFAULT_AI_MODELS_IN_USE
-    prompts_in_use = prompts_in_use or DEFAULT_PROMPTS_IN_USE
+    active_config = runtime_config
+    ai_models_in_use = active_config['AI_MODELS_IN_USE']
+    prompts_in_use = active_config['PROMPTS_IN_USE']
     log('Discovered files', count=len(file_path_list), output=str(raw_responses_folder))
 
     def unit_process(i_file: int, file_path: Path):
@@ -151,8 +144,7 @@ def organize_responses_to_csv(
     combined_responses: list | str,
     output_folder: Path | None = None,
     *,
-    ai_models_in_use: dict | None = None,
-    prompts_in_use: dict | None = None,
+    runtime_config: dict | None = None,
 ):
     """Convert aggregated raw responses into a structured CSV via AI.
 
@@ -169,8 +161,9 @@ def organize_responses_to_csv(
 
     csv_file = output_folder / f'{OUTPUT_CONFIG["csv_filename_prefix"]}-{timestamp}.csv'
 
-    ai_models_in_use = ai_models_in_use or DEFAULT_AI_MODELS_IN_USE
-    prompts_in_use = prompts_in_use or DEFAULT_PROMPTS_IN_USE
+    active_config = runtime_config
+    ai_models_in_use = active_config['AI_MODELS_IN_USE']
+    prompts_in_use = active_config['PROMPTS_IN_USE']
     sort_model_dict = ai_models_in_use['sort_csv']
     # Accept both list of strings or a single string
     combined_as_text = ''.join(combined_responses) if isinstance(combined_responses, list) else str(combined_responses)
@@ -287,18 +280,51 @@ def organize_responses_to_csv(
     return csv_file
 
 
+def process_single_folder(folder: Path, out_folder: Path, runtime_config: dict) -> Path | None:
+    # If folder itself is a raw-responses folder, reuse MDs
+    if folder.is_dir() and folder.name.startswith(raw_prefix):
+        log('Reusing existing raw responses folder', folder=str(folder))
+        md_files = sorted(folder.glob('*.md'))
+        if not md_files:
+            log('No markdown files found in raw responses folder', level='warning', folder=str(folder))
+            return None
+        combined_local = FILE_DELIMITER.join(Path(md_file).read_text(encoding='utf-8') for md_file in md_files)
+    else:
+        combined_local = review_content(
+            folder,
+            out_folder,
+            runtime_config=runtime_config,
+        )
+        if not combined_local:
+            log('No summaries produced; skipping CSV', level='warning', folder=str(folder))
+            return None
+    csv_path_local = organize_responses_to_csv(
+        combined_local,
+        out_folder,
+        runtime_config=runtime_config,
+    )
+    if csv_path_local:
+        log('Pipeline success', csv=str(csv_path_local), folder=str(folder))
+    else:
+        log('Pipeline finished without CSV output', level='warning', folder=str(folder))
+    return csv_path_local
+
+
 def review2csv(
     input_folder_path: Path,
+    runtime_config: dict,
     output_folder: Path | None = None,
     recursive: bool = False,
-    review_type_id: int | str | None = None,
+    func_process_single_folder: Callable[[Path, Path, dict], Path | None] = process_single_folder,
 ):
     """End-to-end pipeline: summarize files then produce CSV.
 
     Args:
         input_folder_path: Root folder to process.
+        runtime_config: Normalized runtime config built via build_runtime_config(...).
         output_folder: Root output folder; when recursive=True, the structure under this root mirrors input.
         recursive: If True, process all subfolders and mirror output structure.
+        func_process_single_folder: Function to process a single folder; default is the internal process_single_folder. This is parameterized for easier DIY processing.
 
     Returns:
         - If recursive is False: Path to the generated CSV or None.
@@ -308,46 +334,12 @@ def review2csv(
     input_root = Path(input_folder_path)
     output_root = Path(output_folder) if output_folder else Path('output')
 
-    # Resolve runtime configuration
-    cfg = get_review_config(review_type_id)
-    ai_models_in_use = cfg['AI_MODELS_IN_USE']
-    prompts_in_use = cfg['PROMPTS_IN_USE']
-
-    raw_prefix = f'{OUTPUT_CONFIG["raw_responses_filename_prefix"]}-'
-
-    def process_single_folder(folder: Path, out_folder: Path):
-        # If folder itself is a raw-responses folder, reuse MDs
-        if folder.is_dir() and folder.name.startswith(raw_prefix):
-            log('Reusing existing raw responses folder', folder=str(folder))
-            md_files = sorted(folder.glob('*.md'))
-            if not md_files:
-                log('No markdown files found in raw responses folder', level='warning', folder=str(folder))
-                return None
-            combined_local = FILE_DELIMITER.join(Path(md_file).read_text(encoding='utf-8') for md_file in md_files)
-        else:
-            combined_local = literature_review(
-                folder,
-                out_folder,
-                ai_models_in_use=ai_models_in_use,
-                prompts_in_use=prompts_in_use,
-            )
-            if not combined_local:
-                log('No summaries produced; skipping CSV', level='warning', folder=str(folder))
-                return None
-        csv_path_local = organize_responses_to_csv(
-            combined_local,
-            out_folder,
-            ai_models_in_use=ai_models_in_use,
-            prompts_in_use=prompts_in_use,
-        )
-        if csv_path_local:
-            log('Pipeline success', csv=str(csv_path_local), folder=str(folder))
-        else:
-            log('Pipeline finished without CSV output', level='warning', folder=str(folder))
-        return csv_path_local
+    if runtime_config is None:
+        msg = 'runtime_config cannot be None. Please build it via build_runtime_config(...) first.'
+        raise ValueError(msg)
 
     if not recursive:
-        return process_single_folder(input_root, output_root)
+        return func_process_single_folder(input_root, output_root, runtime_config)
 
     # Recursive mode: traverse directories and process those with supported files or raw-responses
     results: dict[str, Path | None] = {}
@@ -364,7 +356,7 @@ def review2csv(
         rel = folder.relative_to(input_root) if folder != input_root else Path()
         out_folder = output_root / rel if rel != Path() else output_root
         out_folder.mkdir(parents=True, exist_ok=True)
-        csvp = process_single_folder(folder, out_folder)
+        csvp = func_process_single_folder(folder, out_folder, runtime_config)
         results[str(rel)] = csvp
 
     return results
